@@ -1,60 +1,70 @@
-import express from "express";
-import bodyParser from "body-parser";
-import cors from "cors";
-import OpenAI from "openai";
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-const oa = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const PORT = process.env.PORT || 10000;
 
-const cache = new Map();
-const ttlMs = (parseInt(process.env.DAILY_CACHE_TTL_MINUTES || "1440", 10)) * 60 * 1000;
+// Simple health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
-function requireKey(req, res, next) {
-  if (req.header("X-API-Key") !== process.env.BACKEND_API_KEY) {
-    return res.status(401).json({ error: "Unauthorised" });
+// Motivation endpoint
+app.get('/motivation', async (req, res) => {
+  const requiredKey = process.env.BACKEND_API_KEY || '';
+  const providedKey = req.get('x-api-key') || '';
+
+  // Require API key if one is configured
+  if (requiredKey && providedKey !== requiredKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
-  next();
-}
 
-// Daily motivation
-app.get("/api/motivation", requireKey, async (req, res) => {
-  const role = (req.query.role || "general").toString();
-  const todayKey = `m:${role}:${new Date().toISOString().slice(0,10)}`;
-  const hit = cache.get(todayKey);
-  if (hit && (Date.now() - hit.t) < ttlMs) return res.json({ message: hit.v });
+  const role = (req.query.role || 'general').toLowerCase();
 
-  const prompt = `Write a supportive 2–3 sentence daily motivation for a ${role} first responder. Be empathetic, practical, and non-clinical.`;
-  const r = await oa.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 140
-  });
-  const message = r.choices[0].message.content.trim();
-  cache.set(todayKey, { v: message, t: Date.now() });
-  res.json({ message });
+  // If you haven’t set OPENAI_API_KEY yet, return a safe fallback
+  if (!process.env.OPENAI_API_KEY) {
+    return res.json({
+      message: `You matter and your work makes a difference. Keep going, ${role}.`
+    });
+  }
+
+  try {
+    const prompt = `Write a short (1–2 sentence) encouraging message tailored to a ${role} first responder. Keep it supportive, kind, and professional.`;
+
+    // Node 18+ has global fetch
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a supportive wellness companion for emergency responders.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 120
+      })
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) {
+      return res.status(500).json({ error: 'openai_error', details: data });
+    }
+
+    const message = data.choices?.[0]?.message?.content?.trim() || 'Stay safe and take care.';
+    return res.json({ message });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'server_error' });
+  }
 });
 
-// Wellness companion
-app.post("/api/wellness", requireKey, async (req, res) => {
-  const { message, role = "general", userId } = req.body || {};
-  if (!message) return res.status(400).json({ error: "message required" });
-
-  const system = `You are a supportive wellness companion for emergency workers (${role}). Keep replies under 120 words. Avoid medical diagnosis; suggest healthy coping ideas and community resources.`;
-  const r = await oa.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: message }
-    ],
-    max_tokens: 220
-  });
-  res.json({ reply: r.choices[0].message.content.trim(), userId });
+app.listen(PORT, () => {
+  console.log(`listening on ${PORT}`);
 });
-
-app.get("/", (_req, res) => res.json({ ok: true }));
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`API listening on :${port}`));
