@@ -7,6 +7,15 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
+// 🔐 Middleware to enforce backend API key
+app.use((req, res, next) => {
+  const apiKey = req.headers["x-backend-api-key"];
+  if (apiKey !== process.env.BACKEND_API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+});
+
 // Health check route
 app.get("/health", (req, res) => {
   res.json({ status: "ok", message: "Backend is running!" });
