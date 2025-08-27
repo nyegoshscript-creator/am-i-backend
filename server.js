@@ -6,24 +6,25 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
+const BACKEND_API_KEY = process.env.BACKEND_API_KEY || "";
 
-// 🔐 Middleware to enforce backend API key
+// -------- Public endpoint (no key required) --------
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", message: "Backend is running!" });
+});
+
+// -------- Auth middleware (protect everything below) --------
 app.use((req, res, next) => {
-  const apiKey = req.headers["x-backend-api-key"];
-  if (apiKey !== process.env.BACKEND_API_KEY) {
+  const key = req.header("x-backend-api-key");
+  if (!key || key !== BACKEND_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   next();
 });
 
-// Health check route
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", message: "Backend is running!" });
-});
-
-// Motivation route
+// -------- Protected endpoint --------
 app.get("/motivation", (req, res) => {
-  const role = req.query.role || "general";
+  const role = (req.query.role || "general").toLowerCase();
   const messages = {
     general: "Keep pushing, you're stronger than you think!",
     fitness: "One more rep — progress is built today!",
@@ -32,7 +33,6 @@ app.get("/motivation", (req, res) => {
   res.json({ role, message: messages[role] || messages.general });
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`✅ Server is running on port ${PORT}`);
 });
